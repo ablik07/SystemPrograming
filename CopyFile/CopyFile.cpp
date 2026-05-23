@@ -28,3 +28,33 @@ void copy_c(const char* src, const char* dst) {
     fclose(out);
     printf("Копирование (C) завершено\n");
 }
+
+// 2. Копирование с использованием Windows API
+void copy_winapi(const char* src, const char* dst) {
+    HANDLE hSrc = CreateFileA(src, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hSrc == INVALID_HANDLE_VALUE) {
+        printf("Ошибка открытия исходного файла (WINAPI)\n");
+        return;
+    }
+
+    HANDLE hDst = CreateFileA(dst, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hDst == INVALID_HANDLE_VALUE) {
+        printf("Ошибка создания файла назначения (WINAPI)\n");
+        CloseHandle(hSrc);
+        return;
+    }
+
+    char buffer[4096];
+    DWORD bytesRead, bytesWritten;
+
+    while (ReadFile(hSrc, buffer, sizeof(buffer), &bytesRead, NULL) && bytesRead > 0) {
+        WriteFile(hDst, buffer, bytesRead, &bytesWritten, NULL);
+    }
+
+    CloseHandle(hSrc);
+    CloseHandle(hDst);
+    printf("Копирование (WINAPI) завершено\n");
+}
+
