@@ -5,7 +5,7 @@
 
 using namespace std;
 
-const char* PIPE_NAME = "\\\\.\\pipe\\MyNamedPipe";
+const char* MAILSLOT_NAME = "\\\\.\\mailslot\\MyMailslot";
 
 int ProcessFile(const char* filename, int maxReplacements)
 {
@@ -37,11 +37,8 @@ int ProcessFile(const char* filename, int maxReplacements)
 
 int main()
 {
-    HANDLE hPipe = CreateNamedPipeA(PIPE_NAME, PIPE_ACCESS_DUPLEX,
-        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-        1, 512, 512, 0, NULL);
-
-    if (hPipe == INVALID_HANDLE_VALUE) return -1;
+    HANDLE hMailslot = CreateMailslotA(MAILSLOT_NAME, 0, MAILSLOT_WAIT_FOREVER, NULL);
+    if (hMailslot == INVALID_HANDLE_VALUE) return -1;
 
     cout << "Server started. PID: " << GetCurrentProcessId() << endl;
 
@@ -50,32 +47,32 @@ int main()
 
     while (true)
     {
-        ConnectNamedPipe(hPipe, NULL);
+        if (!ReadFile(hMailslot, buffer, sizeof(buffer), &bytesRead, NULL)) break;
+        buffer[bytesRead] = '\0';
 
-        if (ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, NULL))
+        string data(buffer);
+        if (data == "exit") break;
+
+        string filename = data.substr(0, data.find(' '));
+        int replacements = stoi(data.substr(data.find(' ') + 1));
+
+        int result = ProcessFile(filename.c_str(), replacements);
+
+        HANDLE hClient = CreateFileA(MAILSLOT_NAME, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+        if (hClient != INVALID_HANDLE_VALUE)
         {
-            buffer[bytesRead] = '\0';
-            string filename(buffer);
-
-            if (filename == "exit") break;
-
-            int replacements = atoi(strrchr(filename, ' ') + 1);
-            filename = filename.substr(0, filename.find(' '));
-
-            int result = ProcessFile(filename.c_str(), replacements);
-
-            char response[512];
+            char response[256];
             if (result == -1)
                 sprintf_s(response, "ERROR: Cannot open file '%s'", filename.c_str());
             else
                 sprintf_s(response, "OK: %d replacements", result);
 
-            WriteFile(hPipe, response, (DWORD)strlen(response) + 1, &bytesRead, NULL);
+            DWORD bytesWritten;
+            WriteFile(hClient, response, (DWORD)strlen(response) + 1, &bytesWritten, NULL);
+            CloseHandle(hClient);
         }
-
-        DisconnectNamedPipe(hPipe);
     }
 
-    CloseHandle(hPipe);
+    CloseHandle(hMailslot);
     return 0;
 }
