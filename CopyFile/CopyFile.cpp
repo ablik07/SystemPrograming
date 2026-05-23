@@ -106,7 +106,7 @@ int main()
                 strcpy_s(pBuffer, BUFFER_SIZE, result.c_str());
 
                 cout << "Result: " << result << endl;
-                cout << "----------------------------------------" << endl;
+                cout << "---------------------------------------" << endl;
             }
         }
 
