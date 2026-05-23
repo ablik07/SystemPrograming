@@ -1,135 +1,127 @@
 ﻿#include <windows.h>
 #include <iostream>
-#include <sstream>
+#include <fstream>
 #include <string>
 
 using namespace std;
 
-// Имя события для синхронизации
-const char* EVENT_NAME = "Global\\PipeSyncEvent";
+// Имена объектов
+const char* MAPPING_NAME = "Global\\FileMapping";
+const char* MUTEX_NAME = "Global\\Mutex";
+const int BUFFER_SIZE = 4096;
 
 int main()
 {
     cout << "=== SERVER ===" << endl;
     cout << "PID: " << GetCurrentProcessId() << endl;
 
-    // 1. Создаём анонимный канал
-    HANDLE hReadPipe, hWritePipe;
-    SECURITY_ATTRIBUTES sa;
-    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-    sa.lpSecurityDescriptor = NULL;
-    sa.bInheritHandle = TRUE;  // дескрипторы должны наследоваться
-
-    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0))
+    // 1. Создаём мьютекс
+    HANDLE hMutex = CreateMutexA(NULL, FALSE, MUTEX_NAME);
+    if (hMutex == NULL)
     {
-        cerr << "CreatePipe failed. Error: " << GetLastError() << endl;
+        cerr << "CreateMutex failed. Error: " << GetLastError() << endl;
         return -1;
     }
 
-    // 2. Создаём событие для синхронизации
-    HANDLE hEvent = CreateEventA(NULL, FALSE, TRUE, EVENT_NAME);
-    if (!hEvent)
+    // 2. Создаём отображение файла в памяти
+    HANDLE hMapping = CreateFileMappingA(
+        INVALID_HANDLE_VALUE,   // не связан с файлом на диске
+        NULL,
+        PAGE_READWRITE,
+        0,
+        BUFFER_SIZE,
+        MAPPING_NAME
+    );
+
+    if (hMapping == NULL)
     {
-        cerr << "CreateEvent failed. Error: " << GetLastError() << endl;
-        CloseHandle(hReadPipe);
-        CloseHandle(hWritePipe);
+        cerr << "CreateFileMapping failed. Error: " << GetLastError() << endl;
+        CloseHandle(hMutex);
         return -1;
     }
 
-    // 3. Подготавливаем командную строку для клиента
-    // Передаём дескрипторы как числа
-    char cmdLine[512];
-    sprintf_s(cmdLine, sizeof(cmdLine),
-        "client_pipe.exe %d %d",
-        (int)hReadPipe, (int)hWritePipe);
-
-    // 4. Настраиваем STARTUPINFO для дочернего процесса
-    STARTUPINFO si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
-
-    // 5. Создаём дочерний процесс (клиента)
-    cout << "Starting client process..." << endl;
-
-    if (!CreateProcess(
-        NULL,               // имя программы
-        cmdLine,            // командная строка с дескрипторами
-        NULL,               // атрибуты процесса
-        NULL,               // атрибуты потока
-        TRUE,               // наследовать дескрипторы!
-        CREATE_NEW_CONSOLE, // новая консоль для клиента
-        NULL,               // окружение
-        NULL,               // текущий каталог
-        &si,
-        &pi))
+    // 3. Отображаем в адресное пространство
+    char* pBuffer = (char*)MapViewOfFile(hMapping, FILE_MAP_ALL_ACCESS, 0, 0, BUFFER_SIZE);
+    if (pBuffer == NULL)
     {
-        cerr << "CreateProcess failed. Error: " << GetLastError() << endl;
-        CloseHandle(hReadPipe);
-        CloseHandle(hWritePipe);
-        CloseHandle(hEvent);
+        cerr << "MapViewOfFile failed. Error: " << GetLastError() << endl;
+        CloseHandle(hMapping);
+        CloseHandle(hMutex);
         return -1;
     }
 
-    // Закрываем дескрипторы процесса и потока клиента (они не нужны серверу)
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-
-    cout << "Client started. Beginning data exchange..." << endl;
+    cout << "Server ready. Waiting for commands..." << endl;
     cout << "----------------------------------------" << endl;
 
-    // 6. Двусторонний обмен данными
-    // Сервер отправляет числа 0..4, затем читает ответы
+    bool running = true;
+    string lastCommand = "";
 
-    for (int i = 0; i < 5; i++)
+    while (running)
     {
-        // Ожидаем, пока клиент не прочитает предыдущие данные
-        WaitForSingleObject(hEvent, INFINITE);
+        // Захватываем мьютекс (ждём, пока клиент не освободит его)
+        WaitForSingleObject(hMutex, INFINITE);
 
-        // Отправляем число клиенту
-        DWORD bytesWritten;
-        if (!WriteFile(hWritePipe, &i, sizeof(i), &bytesWritten, NULL))
+        // Читаем команду из отображения
+        string command(pBuffer);
+
+        // Если команда новая и не пустая
+        if (!command.empty() && command != lastCommand)
         {
-            cerr << "Server: WriteFile failed. Error: " << GetLastError() << endl;
-            break;
+            lastCommand = command;
+            cout << "Received command: " << command << endl;
+
+            if (command == "exit")
+            {
+                // Команда завершения
+                strcpy_s(pBuffer, BUFFER_SIZE, "Server shutting down...");
+                running = false;
+            }
+            else
+            {
+                // Обработка команды: подсчёт пробелов в файле
+                string result;
+                int spaceCount = -1;
+
+                ifstream file(command);
+                if (file.is_open())
+                {
+                    spaceCount = 0;
+                    char ch;
+                    while (file.get(ch))
+                    {
+                        if (ch == ' ') spaceCount++;
+                    }
+                    file.close();
+
+                    char buffer[256];
+                    sprintf_s(buffer, sizeof(buffer), "File '%s' spaces: %d", command.c_str(), spaceCount);
+                    result = buffer;
+                }
+                else
+                {
+                    result = "ERROR: Cannot open file '" + command + "'";
+                }
+
+                // Записываем результат в отображение
+                strcpy_s(pBuffer, BUFFER_SIZE, result.c_str());
+
+                cout << "Result: " << result << endl;
+                cout << "----------------------------------------" << endl;
+            }
         }
-        cout << "Server sent: " << i << endl;
 
-        // Сбрасываем событие — теперь клиент может читать
-        ResetEvent(hEvent);
+        // Освобождаем мьютекс (сигнализируем клиенту, что результат готов)
+        ReleaseMutex(hMutex);
 
-        // Читаем ответ от клиента
-        int response;
-        DWORD bytesRead;
-        if (!ReadFile(hReadPipe, &response, sizeof(response), &bytesRead, NULL))
-        {
-            cerr << "Server: ReadFile failed. Error: " << GetLastError() << endl;
-            break;
-        }
-        cout << "Server received: " << response << endl;
-
-        // Сигнализируем клиенту, что чтение завершено
-        SetEvent(hEvent);
-
-        cout << "---" << endl;
+        // Небольшая задержка, чтобы не нагружать процессор
+        Sleep(100);
     }
 
-    // 7. Отправляем сигнал завершения (-1)
-    int endSignal = -1;
-    DWORD bytesWritten;
-    WaitForSingleObject(hEvent, INFINITE);
-    WriteFile(hWritePipe, &endSignal, sizeof(endSignal), &bytesWritten, NULL);
-    ResetEvent(hEvent);
-    SetEvent(hEvent);  // чтобы клиент тоже завершился
+    // 4. Очистка
+    UnmapViewOfFile(pBuffer);
+    CloseHandle(hMapping);
+    CloseHandle(hMutex);
 
-    cout << "---------------------------------------" << endl;
-    cout << "Server: Exchange completed." << endl;
-
-    // 8. Закрываем дескрипторы
-    CloseHandle(hReadPipe);
-    CloseHandle(hWritePipe);
-    CloseHandle(hEvent);
-
+    cout << "Server terminated." << endl;
     return 0;
 }
