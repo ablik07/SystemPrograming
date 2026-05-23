@@ -1,84 +1,51 @@
 ﻿#include <windows.h>
 #include <iostream>
-#include <fstream>
-#include <string>
+#include <process.h>   // для _beginthreadex, _endthreadex
 
 using namespace std;
 
-int main(int argc, char* argv[])
+// Функция потока
+unsigned int __stdcall ThreadFunc(void* data)
 {
-    // 1. Проверка количества аргументов командной строки
-    if (argc != 3)
+    int num = *(int*)data;
+    for (int i = 1; i <= 5; i++)
     {
-        cerr << "Usage: " << argv[0] << " <input_file> <max_replacements>" << endl;
-        cerr << "Example: " << argv[0] << " text.txt 10" << endl;
+        cout << "Thread " << num << ": iteration " << i << endl;
+        Sleep(500);
+    }
+    cout << "Thread " << num << " finished." << endl;
+    return 0;
+}
+
+int main()
+{
+    HANDLE hThread;
+    unsigned int threadID;
+    int param = 1;
+
+    // Создание потока через _beginthreadex
+    hThread = (HANDLE)_beginthrexe(
+        &ThreadFunc,       // адрес функции потока
+        0,                 // размер стека (0 = по умолчанию)
+        &param,            // параметр для потока
+        0,                 // флаги создания (0 = сразу запуск)
+        &threadID          // идентификатор потока
+    );
+
+    if (hThread == NULL)
+    {
+        cerr << "_beginthreadex failed. Error: " << GetLastError() << endl;
+        cin.get();
         return -1;
     }
 
-    const char* inputFileName = argv[1];
-    int maxReplacements = atoi(argv[2]);
+    cout << "Thread created. ID: " << threadID << endl;
 
-    if (maxReplacements <= 0)
-    {
-        cerr << "Error: number of replacements must be positive." << endl;
-        return -1;
-    }
+    // Ожидание завершения потока
+    WaitForSingleObject(hThread, INFINITE);
 
-    // 2. Открытие входного файла
-    ifstream inFile(inputFileName);
-    if (!inFile.is_open())
-    {
-        cerr << "Error: cannot open input file '" << inputFileName << "'" << endl;
-        return -1;
-    }
-
-    // 3. Формирование имени выходного файла (такое же, как входной)
-    string outputFileName = inputFileName;
-
-    // 4. Открытие выходного файла (перезапись)
-    ofstream outFile(outputFileName);
-    if (!outFile.is_open())
-    {
-        cerr << "Error: cannot create output file '" << outputFileName << "'" << endl;
-        inFile.close();
-        return -1;
-    }
-
-    // 5. Обработка файла построчно
-    string line;
-    int totalReplacements = 0;
-
-    while (getline(inFile, line))
-    {
-        string processedLine = line;
-
-        // Проход по строке и поиск пар одинаковых символов
-        for (size_t i = 0; i < processedLine.length() - 1; i++)
-        {
-            if (totalReplacements >= maxReplacements)
-                break;
-
-            if (processedLine[i] == processedLine[i + 1])
-            {
-                processedLine[i + 1] = ' ';
-                totalReplacements++;
-                i++; // пропускаем следующий символ (чтобы не считать одну и ту же пару повторно)
-            }
-        }
-
-        outFile << processedLine << endl;
-
-        if (totalReplacements >= maxReplacements)
-            break;
-    }
-
-    // 6. Закрытие файлов
-    inFile.close();
-    outFile.close();
-
-    // 7. Вывод результата
-    cout << "Processing completed." << endl;
-    cout << "Replacements performed: " << totalReplacements << endl;
-
-    return totalReplacements;
+    CloseHandle(hThread);
+    cout << "Main thread finished." << endl;
+    cin.get();
+    return 0;
 }
