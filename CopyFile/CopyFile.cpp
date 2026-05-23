@@ -75,4 +75,5 @@ int main()
 
     CloseHandle(hMailslot);
     return 0;
+
 }
