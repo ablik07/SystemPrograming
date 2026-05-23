@@ -18,7 +18,7 @@
     <ClCompile Include="CopyFile.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
-    <ClCompile Include="Pointer.cpp">
+    <ClCompile Include="Source.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
   </ItemGroup>
