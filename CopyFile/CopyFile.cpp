@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
             {
                 processedLine[i + 1] = ' ';
                 totalReplacements++;
-                i++; // пропускаем следующий символ
+                i++;
             }
         }
 
