@@ -1,79 +1,218 @@
-﻿#include <windows.h>
+﻿#include <winsock2.h>
+#include <windows.h>
 #include <iostream>
-#include <fstream>
 #include <string>
+#include <fstream>
+
+#pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
-const char* MAILSLOT_NAME = "\\\\.\\mailslot\\MyMailslot";
+const int PORT = 27015;
+const int BUFFER_SIZE = 8192;
 
-int ProcessFile(const char* filename, int maxReplacements)
+class ChatClient
 {
-    ifstream inFile(filename);
-    if (!inFile.is_open()) return -1;
+private:
+    SOCKET sock;
+    string name;
+    HANDLE recvThread;
+    bool running;
 
-    string outFilename = string(filename) + ".out";
-    ofstream outFile(outFilename);
-    if (!outFile.is_open()) return -1;
-
-    string line;
-    int total = 0;
-
-    while (getline(inFile, line) && total < maxReplacements)
+    void SendCommand(const string& cmd)
     {
-        for (size_t i = 0; i < line.length() - 1 && total < maxReplacements; i++)
+        send(sock, cmd.c_str(), (int)cmd.size() + 1, 0);
+    }
+
+    void ReceiveFile(const string& header)
+    {
+        // FILE:size:filename
+        size_t p1 = header.find(':', 5);
+        long size = stol(header.substr(5, p1 - 5));
+        string filename = header.substr(p1 + 1);
+
+        char* buffer = new char[size];
+        int received = 0;
+        while (received < size)
         {
-            if (line[i] == line[i + 1])
+            int r = recv(sock, buffer + received, size - received, 0);
+            if (r <= 0) break;
+            received += r;
+        }
+
+        ofstream file(filename, ios::binary);
+        file.write(buffer, size);
+        file.close();
+        delete[] buffer;
+
+        char ack[10];
+        recv(sock, ack, 10, 0);
+        cout << "File received: " << filename << endl;
+    }
+
+    void UploadFile(const string& filename)
+    {
+        ifstream file(filename, ios::binary);
+        if (!file.is_open())
+        {
+            cout << "Cannot open file" << endl;
+            return;
+        }
+
+        file.seekg(0, ios::end);
+        long size = (long)file.tellg();
+        file.seekg(0, ios::beg);
+
+        char* buffer = new char[size];
+        file.read(buffer, size);
+        file.close();
+
+        string header = "UPLOAD:" + to_string(size) + ":" + filename;
+        SendCommand(header);
+        Sleep(100);
+        send(sock, buffer, size, 0);
+        delete[] buffer;
+
+        char response[20];
+        recv(sock, response, 20, 0);
+        cout << "Upload: " << response << endl;
+    }
+
+    static DWORD WINAPI ReceiveThread(LPVOID param)
+    {
+        ChatClient* client = (ChatClient*)param;
+        char buffer[BUFFER_SIZE];
+
+        while (client->IsRunning())
+        {
+            int bytes = recv(client->GetSocket(), buffer, BUFFER_SIZE - 1, 0);
+            if (bytes <= 0) break;
+
+            buffer[bytes] = '\0';
+            string msg(buffer);
+
+            if (msg.substr(0, 5) == "FILE:")
             {
-                line[i + 1] = ' ';
-                total++;
-                i++;
+                client->ReceiveFile(msg);
+            }
+            else if (msg == "FILE_OK" || msg == "UPLOAD_OK")
+            {
+                // handled elsewhere
+            }
+            else
+            {
+                cout << "\n" << msg << endl;
+                cout << "> ";
+                cout.flush();
             }
         }
-        outFile << line << endl;
+        return 0;
     }
-    return total;
-}
 
-int main()
-{
-    HANDLE hMailslot = CreateMailslotA(MAILSLOT_NAME, 0, MAILSLOT_WAIT_FOREVER, NULL);
-    if (hMailslot == INVALID_HANDLE_VALUE) return -1;
+public:
+    ChatClient() : sock(INVALID_SOCKET), running(true) {}
 
-    cout << "Server started. PID: " << GetCurrentProcessId() << endl;
+    ~ChatClient() { Close(); }
 
-    char buffer[512];
-    DWORD bytesRead;
-
-    while (true)
+    bool Connect(const string& serverIP)
     {
-        if (!ReadFile(hMailslot, buffer, sizeof(buffer), &bytesRead, NULL)) break;
-        buffer[bytesRead] = '\0';
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return false;
 
-        string data(buffer);
-        if (data == "exit") break;
+        sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock == INVALID_SOCKET) return false;
 
-        string filename = data.substr(0, data.find(' '));
-        int replacements = stoi(data.substr(data.find(' ') + 1));
+        sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(PORT);
+        addr.sin_addr.s_addr = inet_addr(serverIP.c_str());
 
-        int result = ProcessFile(filename.c_str(), replacements);
+        if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) return false;
 
-        HANDLE hClient = CreateFileA(MAILSLOT_NAME, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-        if (hClient != INVALID_HANDLE_VALUE)
+        cout << "Enter your name: ";
+        getline(cin, name);
+        send(sock, name.c_str(), (int)name.size() + 1, 0);
+
+        recvThread = CreateThread(NULL, 0, ReceiveThread, this, 0, NULL);
+
+        return true;
+    }
+
+    void Run()
+    {
+        string input;
+        cout << "Connected! Commands: /msg <text>, /file <name>, /upload <name>, /process <file> <n>, /history, /exit" << endl;
+        cout << "> ";
+
+        while (running)
         {
-            char response[256];
-            if (result == -1)
-                sprintf_s(response, "ERROR: Cannot open file '%s'", filename.c_str());
-            else
-                sprintf_s(response, "OK: %d replacements", result);
+            getline(cin, input);
 
-            DWORD bytesWritten;
-            WriteFile(hClient, response, (DWORD)strlen(response) + 1, &bytesWritten, NULL);
-            CloseHandle(hClient);
+            if (input == "/exit")
+            {
+                SendCommand("exit");
+                running = false;
+                break;
+            }
+            else if (input.substr(0, 4) == "/msg")
+            {
+                string msg = input.substr(5);
+                SendCommand("MSG:" + msg);
+            }
+            else if (input.substr(0, 5) == "/file")
+            {
+                string filename = input.substr(6);
+                SendCommand("FILE:" + filename);
+            }
+            else if (input.substr(0, 7) == "/upload")
+            {
+                string filename = input.substr(8);
+                UploadFile(filename);
+            }
+            else if (input.substr(0, 8) == "/process")
+            {
+                size_t p1 = input.find(' ', 9);
+                string filename = input.substr(9, p1 - 9);
+                string num = input.substr(p1 + 1);
+                SendCommand("PROCESS:" + filename + " " + num);
+            }
+            else if (input == "/history")
+            {
+                SendCommand("HISTORY");
+            }
+            else if (!input.empty() && input[0] != '/')
+            {
+                SendCommand("MSG:" + input);
+            }
+
+            cout << "> ";
         }
     }
 
-    CloseHandle(hMailslot);
-    return 0;
+    void Close()
+    {
+        running = false;
+        if (sock != INVALID_SOCKET)
+            closesocket(sock);
+        WSACleanup();
+    }
 
+    SOCKET GetSocket() { return sock; }
+    bool IsRunning() { return running; }
+};
+
+int main(int argc, char* argv[])
+{
+    string serverIP = "127.0.0.1";
+    if (argc > 1) serverIP = argv[1];
+
+    ChatClient client;
+    if (!client.Connect(serverIP))
+    {
+        cout << "Failed to connect to server" << endl;
+        return -1;
+    }
+
+    client.Run();
+    return 0;
 }
