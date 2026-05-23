@@ -19,6 +19,28 @@
 //}
 //
 
+//#include <windows.h>
+//#include <iostream>
+//
+//using namespace std;
+//
+//int main()
+//{
+//    // Переименование (перемещение) файла
+//    if (!MoveFile("C:\\Users\\karolina\\Downloads\\demo\\old.txt",
+//        "C:\\Users\\karolina\\Downloads\\demo\\new.txt"))
+//    {
+//        cerr << "Move file failed." << endl
+//            << "The last error code: " << GetLastError() << endl;
+//        cout << "Press any key to finish.";
+//        cin.get();
+//        return 0;
+//    }
+//
+//    cout << "File moved/renamed successfully." << endl;
+//    return 0;
+//}
+
 #include <windows.h>
 #include <iostream>
 
@@ -26,17 +48,28 @@ using namespace std;
 
 int main()
 {
-    // Переименование (перемещение) файла
-    if (!MoveFile("C:\\Users\\karolina\\Downloads\\demo\\old.txt",
-        "C:\\Users\\karolina\\Downloads\\demo\\new.txt"))
+    // Создание каталога
+    if (!CreateDirectory("C:\\Users\\karolina\\Downloads\\my_new_dir", NULL))
     {
-        cerr << "Move file failed." << endl
+        cerr << "Create directory failed." << endl
             << "The last error code: " << GetLastError() << endl;
         cout << "Press any key to finish.";
         cin.get();
         return 0;
     }
 
-    cout << "File moved/renamed successfully." << endl;
+    cout << "Directory created successfully." << endl;
+
+    // Удаление каталога (только пустой!)
+    if (!RemoveDirectory("C:\\Users\\karolina\\Downloads\\my_new_dir"))
+    {
+        cerr << "Remove directory failed." << endl
+            << "The last error code: " << GetLastError() << endl;
+        cout << "Press any key to finish.";
+        cin.get();
+        return 0;
+    }
+
+    cout << "Directory removed successfully." << endl;
     return 0;
 }
