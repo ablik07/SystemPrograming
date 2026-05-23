@@ -1,77 +1,110 @@
 ﻿#include <windows.h>
 #include <iostream>
-#include <fstream>
 #include <string>
 
 using namespace std;
 
-int main(int argc, char* argv[])
+// Имена объектов (должны совпадать с серверными)
+const char* MAPPING_NAME = "Global\\FileMapping";
+const char* EVENT_COMMAND = "Global\\CommandReadyEvent";
+const char* EVENT_RESULT = "Global\\ResultReadyEvent";
+const char* EVENT_EXIT = "Global\\ExitEvent";
+
+const int BUFFER_SIZE = 4096;
+
+int main()
 {
-    // Проверка аргументов
-    if (argc != 3)
+    cout << "=== CLIENT ===" << endl;
+    cout << "PID: " << GetCurrentProcessId() << endl;
+
+    // 1. Открываем существующее отображение файла
+    HANDLE hMapping = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, MAPPING_NAME);
+    if (hMapping == NULL)
     {
-        cerr << "Usage: child.exe <input_file> <max_replacements>" << endl;
+        cerr << "OpenFileMapping failed. Make sure server is running." << endl;
+        cerr << "Error: " << GetLastError() << endl;
         return -1;
     }
 
-    const char* inputFileName = argv[1];
-    int maxReplacements = atoi(argv[2]);
-
-    if (maxReplacements <= 0)
+    // 2. Отображаем в адресное пространство
+    char* pBuffer = (char*)MapViewOfFile(hMapping, FILE_MAP_ALL_ACCESS, 0, 0, BUFFER_SIZE);
+    if (pBuffer == NULL)
     {
-        cerr << "Error: number of replacements must be positive." << endl;
+        cerr << "MapViewOfFile failed. Error: " << GetLastError() << endl;
+        CloseHandle(hMapping);
         return -1;
     }
 
-    // Открытие входного файла
-    ifstream inFile(inputFileName);
-    if (!inFile.is_open())
+    // 3. Открываем события
+    HANDLE hCommandEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, EVENT_COMMAND);
+    HANDLE hResultEvent = OpenEventA(SYNCHRONIZE, FALSE, EVENT_RESULT);
+    HANDLE hExitEvent = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, EVENT_EXIT);
+
+    if (!hCommandEvent || !hResultEvent || !hExitEvent)
     {
-        cerr << "Error: cannot open input file '" << inputFileName << "'" << endl;
+        cerr << "OpenEvent failed. Make sure server is running." << endl;
+        cerr << "Error: " << GetLastError() << endl;
+        UnmapViewOfFile(pBuffer);
+        CloseHandle(hMapping);
         return -1;
     }
 
-    // Выходной файл с тем же именем
-    string outputFileName = inputFileName;
-    ofstream outFile(outputFileName);
-    if (!outFile.is_open())
+    cout << "Connected to server." << endl;
+    cout << "Enter file names to count spaces, or 'exit' to quit." << endl;
+    cout << "----------------------------------------" << endl;
+
+    string command;
+    bool running = true;
+
+    while (running)
     {
-        cerr << "Error: cannot create output file '" << outputFileName << "'" << endl;
-        inFile.close();
-        return -1;
-    }
+        cout << "> ";
+        getline(cin, command);
 
-    // Обработка файла
-    string line;
-    int totalReplacements = 0;
+        if (command.empty()) continue;
 
-    while (getline(inFile, line) && totalReplacements < maxReplacements)
-    {
-        string processedLine = line;
+        // Записываем команду в отображение
+        strncpy_s(pBuffer, BUFFER_SIZE, command.c_str(), _TRUNCATE);
 
-        for (size_t i = 0; i < processedLine.length() - 1; i++)
+        // Сигнализируем серверу о новой команде
+        SetEvent(hCommandEvent);
+
+        if (command == "exit")
         {
-            if (totalReplacements >= maxReplacements)
-                break;
-
-            if (processedLine[i] == processedLine[i + 1])
-            {
-                processedLine[i + 1] = ' ';
-                totalReplacements++;
-                i++;
-            }
+            // Ждём сигнала завершения от сервера
+            WaitForSingleObject(hExitEvent, INFINITE);
+            cout << "Server confirmed exit. Closing..." << endl;
+            break;
         }
 
-        outFile << processedLine << endl;
+        // Ожидаем результат от сервера
+        DWORD waitResult = WaitForSingleObject(hResultEvent, 5000);
+
+        if (waitResult == WAIT_OBJECT_0)
+        {
+            // Читаем результат из отображения
+            string result(pBuffer);
+            cout << "Server response: " << result << endl;
+        }
+        else if (waitResult == WAIT_TIMEOUT)
+        {
+            cout << "Timeout waiting for server response." << endl;
+        }
+        else
+        {
+            cerr << "Wait failed. Error: " << GetLastError() << endl;
+            break;
+        }
+
+        cout << "----------------------------------------" << endl;
     }
 
-    inFile.close();
-    outFile.close();
+    // Очистка
+    UnmapViewOfFile(pBuffer);
+    CloseHandle(hMapping);
+    CloseHandle(hCommandEvent);
+    CloseHandle(hResultEvent);
+    CloseHandle(hExitEvent);
 
-    // Вывод результата (родительский процесс прочитает через GetExitCodeProcess)
-    cout << "Process " << GetCurrentProcessId()
-        << ": File '" << inputFileName
-        << "' processed. Replacements: " << totalReplacements << endl;
-
-    return totalReplacements;
+    return 0;
 }
