@@ -125,6 +125,7 @@
   <ItemGroup>
     <ClCompile Include="CopyFile.cpp" />
     <ClCompile Include="Directory.cpp" />
+    <ClCompile Include="Events.cpp" />
     <ClCompile Include="Pointer.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
