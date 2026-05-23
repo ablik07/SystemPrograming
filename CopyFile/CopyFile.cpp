@@ -1,66 +1,77 @@
 ﻿#include <windows.h>
 #include <iostream>
-#include <vector>
-#include <sstream>
-#include <algorithm>
+#include <fstream>
+#include <string>
 
 using namespace std;
 
-int main()
+int main(int argc, char* argv[])
 {
-    string fileName;
-    cout << "Enter file name: ";
-    cin >> fileName;
-
-    // Чтение файла
-    HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ | GENERIC_WRITE,
-        0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-
-    if (hFile == INVALID_HANDLE_VALUE)
+    // Проверка аргументов
+    if (argc != 3)
     {
-        cout << "Error!" << endl;
+        cerr << "Usage: child.exe <input_file> <max_replacements>" << endl;
         return -1;
     }
 
-    // Если пустой - пишем пример
-    if (GetFileSize(hFile, NULL) == 0)
+    const char* inputFileName = argv[1];
+    int maxReplacements = atoi(argv[2]);
+
+    if (maxReplacements <= 0)
     {
-        const char* test = "5 2 8 1 9 3 7 4 6";
-        DWORD written;
-        WriteFile(hFile, test, (DWORD)strlen(test), &written, NULL);
-        SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
+        cerr << "Error: number of replacements must be positive." << endl;
+        return -1;
     }
 
-    // Читаем содержимое
-    DWORD size = GetFileSize(hFile, NULL);
-    char* buffer = new char[size + 1];
-    DWORD read;
-    ReadFile(hFile, buffer, size, &read, NULL);
-    buffer[size] = 0;
+    // Открытие входного файла
+    ifstream inFile(inputFileName);
+    if (!inFile.is_open())
+    {
+        cerr << "Error: cannot open input file '" << inputFileName << "'" << endl;
+        return -1;
+    }
 
-    // Парсим числа
-    vector<int> nums;
-    stringstream ss(string(buffer));
-    int x;
-    while (ss >> x) nums.push_back(x);
+    // Выходной файл с тем же именем
+    string outputFileName = inputFileName;
+    ofstream outFile(outputFileName);
+    if (!outFile.is_open())
+    {
+        cerr << "Error: cannot create output file '" << outputFileName << "'" << endl;
+        inFile.close();
+        return -1;
+    }
 
-    // Сортируем по убыванию
-    sort(nums.begin(), nums.end(), greater<int>());
+    // Обработка файла
+    string line;
+    int totalReplacements = 0;
 
-    // Формируем результат
-    stringstream out;
-    for (int n : nums) out << n << " ";
+    while (getline(inFile, line) && totalReplacements < maxReplacements)
+    {
+        string processedLine = line;
 
-    // Записываем обратно
-    SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
-    SetEndOfFile(hFile);
-    string result = out.str();
-    WriteFile(hFile, result.c_str(), (DWORD)result.size(), &size, NULL);
+        for (size_t i = 0; i < processedLine.length() - 1; i++)
+        {
+            if (totalReplacements >= maxReplacements)
+                break;
 
-    cout << "Result: " << result << endl;
+            if (processedLine[i] == processedLine[i + 1])
+            {
+                processedLine[i + 1] = ' ';
+                totalReplacements++;
+                i++; // пропускаем следующий символ
+            }
+        }
 
-    delete[] buffer;
-    CloseHandle(hFile);
+        outFile << processedLine << endl;
+    }
 
-    return 0;
+    inFile.close();
+    outFile.close();
+
+    // Вывод результата (родительский процесс прочитает через GetExitCodeProcess)
+    cout << "Process " << GetCurrentProcessId()
+        << ": File '" << inputFileName
+        << "' processed. Replacements: " << totalReplacements << endl;
+
+    return totalReplacements;
 }
