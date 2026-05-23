@@ -41,6 +41,39 @@
 //    return 0;
 //}
 
+//#include <windows.h>
+//#include <iostream>
+//
+//using namespace std;
+//
+//int main()
+//{
+//    // Создание каталога
+//    if (!CreateDirectory("C:\\Users\\karolina\\Downloads\\my_new_dir", NULL))
+//    {
+//        cerr << "Create directory failed." << endl
+//            << "The last error code: " << GetLastError() << endl;
+//        cout << "Press any key to finish.";
+//        cin.get();
+//        return 0;
+//    }
+//
+//    cout << "Directory created successfully." << endl;
+//
+//    // Удаление каталога (только пустой!)
+//    if (!RemoveDirectory("C:\\Users\\karolina\\Downloads\\my_new_dir"))
+//    {
+//        cerr << "Remove directory failed." << endl
+//            << "The last error code: " << GetLastError() << endl;
+//        cout << "Press any key to finish.";
+//        cin.get();
+//        return 0;
+//    }
+//
+//    cout << "Directory removed successfully." << endl;
+//    return 0;
+//}
+
 #include <windows.h>
 #include <iostream>
 
@@ -48,28 +81,27 @@ using namespace std;
 
 int main()
 {
-    // Создание каталога
-    if (!CreateDirectory("C:\\Users\\karolina\\Downloads\\my_new_dir", NULL))
+    TCHAR buffer[MAX_PATH];
+
+    // Получаем текущий каталог
+    DWORD length = GetCurrentDirectory(MAX_PATH, buffer);
+
+    if (length == 0)
     {
-        cerr << "Create directory failed." << endl
+        cerr << "Get current directory failed." << endl
             << "The last error code: " << GetLastError() << endl;
         cout << "Press any key to finish.";
         cin.get();
         return 0;
     }
 
-    cout << "Directory created successfully." << endl;
-
-    // Удаление каталога (только пустой!)
-    if (!RemoveDirectory("C:\\Users\\karolina\\Downloads\\my_new_dir"))
+    // Если буфер слишком мал
+    if (length > MAX_PATH)
     {
-        cerr << "Remove directory failed." << endl
-            << "The last error code: " << GetLastError() << endl;
-        cout << "Press any key to finish.";
-        cin.get();
+        cout << "Buffer too small. Required size: " << length << endl;
         return 0;
     }
 
-    cout << "Directory removed successfully." << endl;
+    cout << "Current directory: " << buffer << endl;
     return 0;
 }
