@@ -5,123 +5,77 @@
 
 using namespace std;
 
-// Имена объектов
-const char* MAPPING_NAME = "Global\\FileMapping";
-const char* MUTEX_NAME = "Global\\Mutex";
-const int BUFFER_SIZE = 4096;
+const char* PIPE_NAME = "\\\\.\\pipe\\MyNamedPipe";
+
+int ProcessFile(const char* filename, int maxReplacements)
+{
+    ifstream inFile(filename);
+    if (!inFile.is_open()) return -1;
+
+    string outFilename = string(filename) + ".out";
+    ofstream outFile(outFilename);
+    if (!outFile.is_open()) return -1;
+
+    string line;
+    int total = 0;
+
+    while (getline(inFile, line) && total < maxReplacements)
+    {
+        for (size_t i = 0; i < line.length() - 1 && total < maxReplacements; i++)
+        {
+            if (line[i] == line[i + 1])
+            {
+                line[i + 1] = ' ';
+                total++;
+                i++;
+            }
+        }
+        outFile << line << endl;
+    }
+    return total;
+}
 
 int main()
 {
-    cout << "=== SERVER ===" << endl;
-    cout << "PID: " << GetCurrentProcessId() << endl;
+    HANDLE hPipe = CreateNamedPipeA(PIPE_NAME, PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+        1, 512, 512, 0, NULL);
 
-    // 1. Создаём мьютекс
-    HANDLE hMutex = CreateMutexA(NULL, FALSE, MUTEX_NAME);
-    if (hMutex == NULL)
+    if (hPipe == INVALID_HANDLE_VALUE) return -1;
+
+    cout << "Server started. PID: " << GetCurrentProcessId() << endl;
+
+    char buffer[512];
+    DWORD bytesRead;
+
+    while (true)
     {
-        cerr << "CreateMutex failed. Error: " << GetLastError() << endl;
-        return -1;
-    }
+        ConnectNamedPipe(hPipe, NULL);
 
-    // 2. Создаём отображение файла в памяти
-    HANDLE hMapping = CreateFileMappingA(
-        INVALID_HANDLE_VALUE,   // не связан с файлом на диске
-        NULL,
-        PAGE_READWRITE,
-        0,
-        BUFFER_SIZE,
-        MAPPING_NAME
-    );
-
-    if (hMapping == NULL)
-    {
-        cerr << "CreateFileMapping failed. Error: " << GetLastError() << endl;
-        CloseHandle(hMutex);
-        return -1;
-    }
-
-    // 3. Отображаем в адресное пространство
-    char* pBuffer = (char*)MapViewOfFile(hMapping, FILE_MAP_ALL_ACCESS, 0, 0, BUFFER_SIZE);
-    if (pBuffer == NULL)
-    {
-        cerr << "MapViewOfFile failed. Error: " << GetLastError() << endl;
-        CloseHandle(hMapping);
-        CloseHandle(hMutex);
-        return -1;
-    }
-
-    cout << "Server ready. Waiting for commands..." << endl;
-    cout << "----------------------------------------" << endl;
-
-    bool running = true;
-    string lastCommand = "";
-
-    while (running)
-    {
-        // Захватываем мьютекс (ждём, пока клиент не освободит его)
-        WaitForSingleObject(hMutex, INFINITE);
-
-        // Читаем команду из отображения
-        string command(pBuffer);
-
-        // Если команда новая и не пустая
-        if (!command.empty() && command != lastCommand)
+        if (ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, NULL))
         {
-            lastCommand = command;
-            cout << "Received command: " << command << endl;
+            buffer[bytesRead] = '\0';
+            string filename(buffer);
 
-            if (command == "exit")
-            {
-                // Команда завершения
-                strcpy_s(pBuffer, BUFFER_SIZE, "Server shutting down...");
-                running = false;
-            }
+            if (filename == "exit") break;
+
+            int replacements = atoi(strrchr(filename, ' ') + 1);
+            filename = filename.substr(0, filename.find(' '));
+
+            int result = ProcessFile(filename.c_str(), replacements);
+
+            char response[512];
+            if (result == -1)
+                sprintf_s(response, "ERROR: Cannot open file '%s'", filename.c_str());
             else
-            {
-                // Обработка команды: подсчёт пробелов в файле
-                string result;
-                int spaceCount = -1;
+                sprintf_s(response, "OK: %d replacements", result);
 
-                ifstream file(command);
-                if (file.is_open())
-                {
-                    spaceCount = 0;
-                    char ch;
-                    while (file.get(ch))
-                    {
-                        if (ch == ' ') spaceCount++;
-                    }
-                    file.close();
-
-                    char buffer[256];
-                    sprintf_s(buffer, sizeof(buffer), "File '%s' spaces: %d", command.c_str(), spaceCount);
-                    result = buffer;
-                }
-                else
-                {
-                    result = "ERROR: Cannot open file '" + command + "'";
-                }
-
-                // Записываем результат в отображение
-                strcpy_s(pBuffer, BUFFER_SIZE, result.c_str());
-
-                cout << "Result: " << result << endl;
-                cout << "--------------------------------------" << endl;
-            }
+            WriteFile(hPipe, response, (DWORD)strlen(response) + 1, &bytesRead, NULL);
         }
 
-        // Освобождаем мьютекс (сигнализируем клиенту, что результат готов)
-        ReleaseMutex(hMutex);
-
-        // Небольшая задержка, чтобы не нагружать процессор
-        Sleep(100);
+        DisconnectNamedPipe(hPipe);
     }
 
-    // 4. Очистка
-    UnmapViewOfFile(pBuffer);
-    CloseHandle(hMapping);
-    CloseHandle(hMutex);
-
-    cout << "Server terminated." << endl;
+    CloseHandle(hPipe);
     return 0;
 }
