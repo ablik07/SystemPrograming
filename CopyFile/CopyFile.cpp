@@ -58,3 +58,27 @@ void copy_winapi(const char* src, const char* dst) {
     printf("Копирование (WINAPI) завершено\n");
 }
 
+// 3. Копирование с использованием CopyFile
+void copy_copyfile(const char* src, const char* dst) {
+    if (CopyFileA(src, dst, FALSE)) {
+        printf("Копирование (CopyFile) завершено\n");
+    }
+    else {
+        printf("Ошибка копирования (CopyFile)\n");
+    }
+}
+
+int main() {
+    const char* source = "source.txt";
+    const char* dest_c = "copy_c.txt";
+    const char* dest_winapi = "copy_winapi.txt";
+    const char* dest_copyfile = "copy_copyfile.txt";
+
+    printf("Начинаем копирование файла %s\n\n", source);
+
+    copy_c(source, dest_c);
+    copy_winapi(source, dest_winapi);
+    copy_copyfile(source, dest_copyfile);
+
+    return 0;
+}
