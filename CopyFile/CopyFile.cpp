@@ -123,7 +123,7 @@ int main()
     ResetEvent(hEvent);
     SetEvent(hEvent);  // чтобы клиент тоже завершился
 
-    cout << "----------------------------------------" << endl;
+    cout << "---------------------------------------" << endl;
     cout << "Server: Exchange completed." << endl;
 
     // 8. Закрываем дескрипторы
