@@ -1,133 +1,93 @@
 #include <windows.h>
 #include <iostream>
-#include <fstream>
 #include <string>
 
 using namespace std;
 
-// Имена объектов
-const char* MAPPING_NAME = "Global\\FileMapping";
-const char* EVENT_COMMAND = "Global\\CommandReadyEvent";
-const char* EVENT_RESULT = "Global\\ResultReadyEvent";
-const char* EVENT_EXIT = "Global\\ExitEvent";
+const char* EVENT_NAME = "Global\\PipeSyncEvent";
 
-const int BUFFER_SIZE = 4096;
-
-int main()
+int main(int argc, char* argv[])
 {
-    cout << "=== SERVER ===" << endl;
+    cout << "=== CLIENT ===" << endl;
     cout << "PID: " << GetCurrentProcessId() << endl;
 
-    // 1. Создаём отображение файла в памяти
-    HANDLE hMapping = CreateFileMappingA(
-        INVALID_HANDLE_VALUE,   // не связан с файлом на диске
-        NULL,
-        PAGE_READWRITE,
-        0,
-        BUFFER_SIZE,
-        MAPPING_NAME
-    );
-
-    if (hMapping == NULL)
+    // 1. Проверка аргументов командной строки
+    if (argc != 3)
     {
-        cerr << "CreateFileMapping failed. Error: " << GetLastError() << endl;
+        cerr << "Usage: client_pipe.exe <readHandle> <writeHandle>" << endl;
+        cerr << "This program should be started by the server." << endl;
         return -1;
     }
 
-    // 2. Отображаем в адресное пространство
-    char* pBuffer = (char*)MapViewOfFile(hMapping, FILE_MAP_ALL_ACCESS, 0, 0, BUFFER_SIZE);
-    if (pBuffer == NULL)
+    // 2. Преобразуем дескрипторы из командной строки
+    HANDLE hReadPipe = (HANDLE)atoi(argv[1]);
+    HANDLE hWritePipe = (HANDLE)atoi(argv[2]);
+
+    cout << "Client: read handle = " << (int)hReadPipe << endl;
+    cout << "Client: write handle = " << (int)hWritePipe << endl;
+
+    // 3. Открываем существующее событие
+    HANDLE hEvent = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, EVENT_NAME);
+    if (!hEvent)
     {
-        cerr << "MapViewOfFile failed. Error: " << GetLastError() << endl;
-        CloseHandle(hMapping);
+        cerr << "Client: OpenEvent failed. Error: " << GetLastError() << endl;
         return -1;
     }
 
-    // 3. Создаём события
-    HANDLE hCommandEvent = CreateEventA(NULL, FALSE, FALSE, EVENT_COMMAND);
-    HANDLE hResultEvent = CreateEventA(NULL, FALSE, FALSE, EVENT_RESULT);
-    HANDLE hExitEvent = CreateEventA(NULL, FALSE, FALSE, EVENT_EXIT);
-
-    if (!hCommandEvent || !hResultEvent || !hExitEvent)
-    {
-        cerr << "CreateEvent failed. Error: " << GetLastError() << endl;
-        UnmapViewOfFile(pBuffer);
-        CloseHandle(hMapping);
-        return -1;
-    }
-
-    cout << "Server ready. Waiting for commands..." << endl;
+    cout << "Client connected to server. Starting data exchange..." << endl;
     cout << "----------------------------------------" << endl;
 
-    // 4. Основной цикл
-    HANDLE hEvents[2] = { hCommandEvent, hExitEvent };
-    bool running = true;
+    // 4. Двусторонний обмен данными
+    int received;
+    DWORD bytesRead;
 
-    while (running)
+    while (true)
     {
-        // Ожидаем команду или сигнал завершения
-        DWORD waitResult = WaitForMultipleObjects(2, hEvents, FALSE, INFINITE);
+        // Ожидаем сигнала от сервера (готовность к чтению)
+        WaitForSingleObject(hEvent, INFINITE);
 
-        if (waitResult == WAIT_OBJECT_0 + 1) // ExitEvent
+        // Читаем число от сервера
+        if (!ReadFile(hReadPipe, &received, sizeof(received), &bytesRead, NULL))
         {
-            cout << "Exit signal received. Shutting down..." << endl;
+            cerr << "Client: ReadFile failed. Error: " << GetLastError() << endl;
             break;
         }
-        else if (waitResult == WAIT_OBJECT_0) // CommandEvent
+
+        // Проверка на завершение
+        if (received == -1)
         {
-            // Читаем команду из отображения
-            string command(pBuffer);
-            cout << "Received command: " << command << endl;
-
-            if (command == "exit")
-            {
-                // Клиент запросил завершение
-                SetEvent(hExitEvent); // сигнал для клиента (опционально)
-                break;
-            }
-
-            // Обработка команды: подсчёт пробелов в файле
-            string result;
-            int spaceCount = -1;
-
-            ifstream file(command);
-            if (file.is_open())
-            {
-                spaceCount = 0;
-                char ch;
-                while (file.get(ch))
-                {
-                    if (ch == ' ') spaceCount++;
-                }
-                file.close();
-
-                char buffer[256];
-                sprintf_s(buffer, sizeof(buffer), "File '%s' spaces: %d", command.c_str(), spaceCount);
-                result = buffer;
-            }
-            else
-            {
-                result = "ERROR: Cannot open file '" + command + "'";
-            }
-
-            // Записываем результат в отображение
-            strncpy_s(pBuffer, BUFFER_SIZE, result.c_str(), _TRUNCATE);
-
-            // Сигнализируем клиенту, что результат готов
-            SetEvent(hResultEvent);
-
-            cout << "Result: " << result << endl;
-            cout << "----------------------------------------" << endl;
+            cout << "Client received termination signal." << endl;
+            break;
         }
+
+        cout << "Client received: " << received << endl;
+
+        // Обрабатываем: отправляем обратно число * 10
+        int response = received * 10;
+
+        // Сбрасываем событие — теперь сервер может читать
+        ResetEvent(hEvent);
+
+        // Отправляем ответ серверу
+        DWORD bytesWritten;
+        if (!WriteFile(hWritePipe, &response, sizeof(response), &bytesWritten, NULL))
+        {
+            cerr << "Client: WriteFile failed. Error: " << GetLastError() << endl;
+            break;
+        }
+        cout << "Client sent: " << response << endl;
+
+        // Сигнализируем серверу, что запись завершена
+        SetEvent(hEvent);
     }
 
-    // 5. Очистка
-    UnmapViewOfFile(pBuffer);
-    CloseHandle(hMapping);
-    CloseHandle(hCommandEvent);
-    CloseHandle(hResultEvent);
-    CloseHandle(hExitEvent);
+    cout << "----------------------------------------" << endl;
+    cout << "Client finished." << endl;
 
-    cout << "Server terminated." << endl;
+    // 5. Закрываем дескрипторы
+    CloseHandle(hReadPipe);
+    CloseHandle(hWritePipe);
+    CloseHandle(hEvent);
+
     return 0;
 }
